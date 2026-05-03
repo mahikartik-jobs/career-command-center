@@ -12,15 +12,18 @@ st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #1a5f7a; color: white; }
-    .cover-letter-box { background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #ddd; font-family: 'Times New Roman', serif; }
+    .cover-letter-box { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ddd; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }
     </style>
     """, unsafe_allow_html=True)
 
+# --- HUMAN-CENTRIC USER PROFILE ---
+# I have changed this from a list to a narrative. This helps the AI sound more human.
 USER_PROFILE = """
-Name: Mahidhar Miriyala
-Role: Principal Statistical Programmer / TA Lead Manager
-Experience: 16+ years in Pharma/Biotech.
-Expertise: SDTM, ADaM, TLFs, Regulatory Submissions (FDA/PMDA), BLA, ISS/ISE, CDISC, Pinnacle 21.
+Mahidhar Miriyala is a seasoned Principal Statistical Programmer and TA Lead Manager with over 16 years of deep-trench experience in the Pharma and Biotech sectors. 
+He doesn't just know the standards; he has lived them through multiple high-stakes FDA and PMDA regulatory submissions. 
+His core strength is the end-to-end delivery of BLA and NDA packages, specifically the complex work involved in ISS and ISE. 
+He is a subject matter expert in CDISC (SDTM, ADaM) and Pinnacle 21, with a proven track record of leading cross-functional teams and managing CRO vendors to ensure submission-readiness.
+Expertise spans Oncology, Fibrosis, Cardiovascular, and Neuroscience.
 """
 
 # --- SECRET MANAGEMENT ---
@@ -80,7 +83,19 @@ def search_jobs_fuzzy(role_input, loc_input):
 
 def analyze_job(job_text):
     try:
-        prompt = f"Compare this Job Description with the Candidate Profile.\n\nPROFILE:\n{USER_PROFILE}\n\nJOB:\n{job_text}\n\nFormat: Score [0-100]%, Reason [2 sentences], Key Missing [List]."
+        prompt = f"""
+        Act as a peer-level Statistical Programming Director. 
+        Look at this job description and Mahidhar's profile. 
+        Don't use corporate jargon. Tell me honestly: is this a match?
+        
+        CANDIDATE: {USER_PROFILE}
+        JOB: {job_text}
+        
+        Format: 
+        Score: [0-100]%
+        Why: [1-2 sentences in natural, human language]
+        Gap: [What's missing, or 'None']
+        """
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
@@ -90,19 +105,18 @@ def analyze_job(job_text):
         return f"AI Analysis unavailable: {e}"
 
 def generate_cover_letter(job_title, job_snippet):
-    """Professional Cover Letter Engine"""
     try:
         prompt = f"""
-        Write a highly professional, executive-level cover letter for the position of {job_title}.
-        CANDIDATE PROFILE: {USER_PROFILE}
+        Write a cover letter for {job_title}. 
+        USE THIS PROFILE: {USER_PROFILE}
         JOB DETAILS: {job_snippet}
         
-        Requirements:
-        1. Professional business letter format.
-        2. Highlight 16+ years of experience and specific expertise in CDISC, BLA, and FDA submissions.
-        3. Connect the candidate's TA Lead experience to the needs of the job.
-        4. Keep it to 3-4 paragraphs.
-        5. Use a confident, authoritative, yet humble tone.
+        CRITICAL INSTRUCTIONS for a HUMAN tone:
+        1. DO NOT use words like 'passionate', 'leverage', 'synergy', or 'thrilled'.
+        2. Write it as a conversation between two experts. 
+        3. Focus on evidence: instead of saying 'I am an expert in CDISC', say 'I've spent the last 16 years ensuring BLA and NDA packages are CDISC-compliant.'
+        4. Keep it concise, confident, and avoid sounding like a template. 
+        5. Use a natural, professional flow.
         """
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -131,7 +145,7 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 High-Precision Discovery & Application Suite")
+st.markdown("### 🚀 High-Precision Discovery & Human-Centric Applications")
 
 tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
 
@@ -146,7 +160,14 @@ with tab1:
             if results:
                 st.session_state['jobs_df'] = pd.DataFrame(results)
                 st.success(f"Found {len(results)} unique roles!")
-                st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], use_container_width=True)
+                
+                # --- CLICKABLE LINKS FIX ---
+                # We use st.dataframe with column_config to make links clickable
+                st.dataframe(
+                    st.session_state['jobs_df'][["Title", "Link"]], 
+                    column_config={"Link": st.column_config.LinkColumn("Click to Apply ↗️")},
+                    use_container_width=True
+                )
             else:
                 st.error("No roles found.")
 
@@ -159,10 +180,9 @@ with tab2:
         job = df.iloc[selected_idx]
         
         col_a, col_b = st.columns([1, 1])
-        
         with col_a:
             if st.button("🧠 Analyze Match %"):
-                with st.spinner("Analyzing..."):
+                with st.spinner("Thinking like a Director..."):
                     analysis = analyze_job(job['Snippet'])
                     st.markdown(f"### AI Analysis\n{analysis}")
                     if st.button("✅ Mark as Applied"):
@@ -170,12 +190,12 @@ with tab2:
                             st.success("Saved to tracker!")
 
         with col_b:
-            if st.button("📄 Generate Cover Letter"):
-                with st.spinner("Writing professional letter..."):
+            if st.button("📄 Generate Human Cover Letter"):
+                with st.spinner("Drafting..."):
                     letter = generate_cover_letter(job['Title'], job['Snippet'])
-                    st.markdown("### Your Tailored Cover Letter")
+                    st.markdown("### Your Tailored Letter")
                     st.markdown(f'<div class="cover-letter-box">{letter}</div>', unsafe_allow_html=True)
-                    st.info("💡 Copy this text and paste it into the 'Cover Letter' section of the application.")
+                    st.info("💡 Pro Tip: Read through this and tweak one sentence to make it truly yours before sending.")
 
 with tab3:
     st.subheader("My Application CRM")
