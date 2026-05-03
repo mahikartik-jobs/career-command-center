@@ -8,7 +8,7 @@ import PyPDF2
 import io
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Universal Career Command Center", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Principal Programmer Command Center", page_icon="🎯", layout="wide")
 
 st.markdown("""
     <style>
@@ -50,10 +50,33 @@ def extract_text_from_pdf(uploaded_file):
         st.error(f"Error reading PDF: {e}")
         return None
 
-# --- CORE LOGIC ---
+# --- AI KEYWORD GENERATOR ---
+def generate_search_targets(cv_text):
+    """AI analyzes the CV and returns the best 5 search roles"""
+    try:
+        prompt = f"""
+        Analyze this professional CV and provide exactly 5 high-impact job titles that this person is qualified for.
+        Focus on Senior/Principal/Director levels in Statistical Programming and Biostatistics.
+        Return ONLY a comma-separated list of titles. 
+        Example: Principal Statistical Programmer, Associate Director Biostatistics, Statistical Programming Manager, Lead Programmer, Clinical Programming Director
+        
+        CV TEXT:
+        {cv_text}
+        """
+        completion = client_groq.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": "You are an expert Pharma recruiter."},
+                      {"role": "user", "content": prompt}]
+        )
+        titles_string = completion.choices[0].message.content
+        return [t.strip() for t in titles_string.split(",")]
+    except Exception as e:
+        st.error(f"AI keyword generation failed: {e}")
+        return ["Statistical Programmer"]
 
-def search_jobs_fuzzy(role_input, loc_input):
-    role_variations = [role_input, role_input.replace("Programming", "Programmer")]
+# --- CORE LOGIC ---
+def search_jobs_fuzzy(role_list, loc_input):
+    """Casts a net using multiple AI-generated roles"""
     seniority = ["Principal", "Associate Director", "Manager", "Lead"]
     hubs = [loc_input, "Remote", "New Jersey", "Boston", "California", "USA"]
     site_keywords = "careers apply jobs"
@@ -63,12 +86,14 @@ def search_jobs_fuzzy(role_input, loc_input):
     headers = {'X-API-KEY': serper_key, 'Content-Type': 'application/json'}
     
     progress_bar = st.progress(0)
-    total_combos = len(role_variations) * len(seniority) * len(hubs)
+    # Total combos = roles * seniority * hubs
+    total_combos = len(role_list) * len(seniority) * len(hubs)
     count = 0
 
-    for r in role_variations:
+    for r in role_list:
         for s in seniority:
             for h in hubs:
+                # Create a flexible query
                 query = f'{s} {r} {h} {site_keywords}'
                 try:
                     payload = {"q": query, "num": 50} 
@@ -98,16 +123,7 @@ def analyze_job(job_text, user_profile):
 
 def generate_cover_letter(job_title, job_snippet, user_profile):
     try:
-        prompt = f"""
-        Write a professional, human-sounding cover letter for {job_title}. 
-        CANDIDATE PROFILE: {user_profile}
-        JOB DETAILS: {job_snippet}
-        
-        CRITICAL INSTRUCTIONS:
-        1. No corporate buzzwords. 
-        2. Use an industry-peer tone.
-        3. Focus on evidence-based achievements.
-        """
+        prompt = f"Write a professional, human-sounding cover letter for {job_title}. PROFILE: {user_profile} JOB: {job_snippet}. Focus on 16+ years experience and BLA/NDA success. No corporate buzzwords."
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
@@ -135,13 +151,14 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Universal Career Command Center")
-st.markdown("### 🚀 Multi-Profile Job Discovery & AI Matching")
+st.markdown("### 🚀 AI-Driven Discovery & Application Suite")
 
-# INITIALIZE SESSION STATES
 if 'jobs_df' not in st.session_state:
     st.session_state['jobs_df'] = None
 if 'user_cv_text' not in st.session_state:
     st.session_state['user_cv_text'] = None
+if 'ai_targets' not in st.session_state:
+    st.session_state['ai_targets'] = []
 
 tab1, tab2, tab3, tab4 = st.tabs(["👤 Profile Settings", "📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
 
@@ -150,63 +167,66 @@ with tab1:
     uploaded_file = st.file_uploader("Upload your CV (PDF)", type="pdf")
     
     if uploaded_file:
-        with st.spinner("Extracting experience..."):
+        with st.spinner("Analyzing CV and generating search targets..."):
             text = extract_text_from_pdf(uploaded_file)
             st.session_state['user_cv_text'] = text
-            st.success("CV uploaded and parsed successfully!")
+            # AI EXTRACTS BEST JOB TITLES
+            targets = generate_search_targets(text)
+            st.session_state['ai_targets'] = targets
+            st.success(f"CV parsed! AI has identified these target roles for you: {', '.join(targets)}")
             with st.expander("View Extracted Text"):
                 st.write(text)
     else:
-        st.info("Please upload your CV to activate the AI Matcher.")
+        st.info("Please upload your CV to activate AI-powered search.")
 
 with tab2:
     col1, col2 = st.columns(2)
-    with col1: target_role = st.text_input("Target Role", value="Statistical Programmer")
-    with col2: target_loc = st.text_input("Target Location", value="Remote")
+    with col1: 
+        # Now the role input defaults to the first AI-suggested target
+        default_role = st.session_state['ai_targets'][0] if st.session_state['ai_targets'] else "Statistical Programmer"
+        target_role = st.text_input("Primary Target Role", value=default_role)
+    with col2: 
+        target_loc = st.text_input("Target Location", value="Remote")
 
-    if st.button("🚀 Scan for High-Value Roles"):
-        with st.spinner("Executing Fuzzy Cluster Search..."):
-            results = search_jobs_fuzzy(target_role, target_loc)
-            if results:
-                st.session_state['jobs_df'] = pd.DataFrame(results)
-                st.success(f"Found {len(results)} unique roles!")
-                st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], 
-                              column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
-                              use_container_width=True)
-            else:
-                st.error("No roles found.")
+    if st.button("🚀 Scan Based on My Profile"):
+        if st.session_state['user_cv_text'] is None:
+            st.error("Please upload your CV in the Profile tab first!")
+        else:
+            with st.spinner("Running AI-powered cluster search..."):
+                # We use the AI-generated targets instead of just one role
+                results = search_jobs_fuzzy(st.session_state['ai_targets'], target_loc)
+                if results:
+                    st.session_state['jobs_df'] = pd.DataFrame(results)
+                    st.success(f"Found {len(results)} roles matching your profile!")
+                    st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], 
+                                  column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
+                                  use_container_width=True)
+                else:
+                    st.error("No roles found. Try changing the location.")
 
 with tab3:
     if st.session_state['user_cv_text'] is None:
-        st.error("❌ Please upload your CV in the 'Profile Settings' tab first!")
-    elif st.session_state['jobs_df'] is None or st.session_state['jobs_df'].empty:
+        st.error("❌ Upload CV first!")
+    elif st.session_state['jobs_df'] is None:
         st.info("Run Discovery Radar first.")
     else:
         df = st.session_state['jobs_df']
-        
-        # FIX: We use the Title as the selection value instead of a range index.
-        # This prevents the TypeError when the dataframe changes.
-        job_titles = df['Title'].tolist()
-        selected_title = st.selectbox("Select a Job to Analyze", options=job_titles)
-        
-        # Retrieve the full job data based on the selected title
-        job = df[df['Title'] == selected_title].iloc[0]
-        
+        selected_idx = st.selectbox("Select a Job", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
+        job = df.iloc[selected_idx]
         col_a, col_b = st.columns([1, 1])
         with col_a:
             if st.button("🧠 Analyze Match %"):
-                with st.spinner("AI Analyzing..."):
+                with st.spinner("Analyzing..."):
                     analysis = analyze_job(job['Snippet'], st.session_state['user_cv_text'])
                     st.markdown(f"### AI Analysis\n{analysis}")
                     if st.button("✅ Mark as Applied"):
                         if save_to_tracker(job['Title'], job['Link']):
-                            st.success("Saved to tracker!")
+                            st.success("Saved!")
 
         with col_b:
             if st.button("📄 Generate Human Cover Letter"):
                 with st.spinner("Drafting..."):
                     letter = generate_cover_letter(job['Title'], job['Snippet'], st.session_state['user_cv_text'])
-                    st.markdown("### Your Tailored Letter")
                     st.markdown(f'<div class="cover-letter-box">{letter}</div>', unsafe_allow_html=True)
 
 with tab4:
