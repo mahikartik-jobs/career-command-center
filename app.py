@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 from groq import Groq
 from supabase import create_client, Client
+import time
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Principal Programmer Command Center", page_icon="🎯", layout="wide")
@@ -35,33 +36,64 @@ if not all([serper_key, groq_key, supa_url, supa_key]):
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- UPDATED SEARCH LOGIC ---
-def search_jobs(role, location):
-    """Hybrid search: Try strict ATS sites first, then fall back to broad web search"""
+# --- RESTORED AGGRESSIVE SEARCH LOGIC ---
+def search_jobs_cluster(role_input, loc_input):
+    """The la-script 'Cluster' logic: Multiple searches for maximum volume"""
+    
+    # Define the clusters we want to hunt in
+    # We use the user's input as the base, but add high-value seniority keywords
+    SENIORITY = ["Principal", "Associate Director", "Manager", "Lead"]
+    # We use the user's location, but also add the Pharma hubs
+    HUBS = [loc_input, "Remote", "New Jersey", "Boston", "California", "North Carolina"]
+    
+    # The sites we trust for high-quality direct applications
+    SITES = ['site:greenhouse.io', 'site:lever.co', 'site:myworkdayjobs.com', 'site:workday.com']
+    
+    all_results = {} # Use dictionary to prevent duplicate links
+    
+    # We will perform multiple searches to cast a huge net
+    # To keep the app fast, we'll do 10-15 high-impact combinations
+    search_combinations = []
+    for s in SENIORITY:
+        for h in HUBS:
+            # Create a query for each combo
+            # Example: site:greenhouse.io "Principal" "Statistical Programming" "Remote"
+            for site in SITES:
+                search_combinations.append(f'{site} "{s}" "{role_input}" "{h}"')
+
+    # To prevent the app from timing out, we limit to the top 20 most effective combos
+    # and ask for 100 results per query.
+    selected_queries = search_combinations[:20] 
+    
     url = "https://google.serper.dev/search"
     headers = {'X-API-KEY': serper_key, 'Content-Type': 'application/json'}
     
-    # STRATEGY 1: Strict ATS (Highest Quality)
-    strict_query = f'("Principal" OR "Associate Director" OR "Manager") "{role}" "{location}" (site:greenhouse.io OR site:lever.co OR site:workday.com OR site:myworkdayjobs.com)'
+    progress_bar = st.progress(0)
     
-    # STRATEGY 2: Broad Search (Highest Volume)
-    broad_query = f'("Principal" OR "Associate Director" OR "Manager") "{role}" "{location}" "careers" OR "apply"'
-    
-    try:
-        # Attempt 1: Strict Search
-        res_strict = requests.post(url, headers=headers, json={"q": strict_query, "num": 50}, timeout=15)
-        results = res_strict.json().get('organic', []) if res_strict.status_code == 200 else []
-        
-        # If strict search finds nothing, try broad search
-        if not results:
-            st.info("No strict ATS matches found. Switching to Broad Search...")
-            res_broad = requests.post(url, headers=headers, json={"q": broad_query, "num": 50}, timeout=15)
-            results = res_broad.json().get('organic', []) if res_broad.status_code == 200 else []
+    for i, query in enumerate(selected_queries):
+        try:
+            # num: 100 is the maximum results Serper can return per request
+            payload = {"q": query, "num": 100} 
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
             
-        return results
-    except Exception as e:
-        st.error(f"Search Error: {e}")
-        return []
+            if response.status_code == 200:
+                organic = response.json().get('organic', [])
+                for job in organic:
+                    link = job.get('link')
+                    if link:
+                        all_results[link] = {
+                            "Title": job.get('title'),
+                            "Snippet": job.get('snippet'),
+                            "Link": link
+                        }
+            
+            # Update progress bar
+            progress_bar.progress((i + 1) / len(selected_queries))
+            
+        except Exception as e:
+            continue # Keep moving even if one query fails
+
+    return list(all_results.values())
 
 def analyze_job(job_text):
     try:
@@ -93,25 +125,24 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### High-Precision Discovery & Permanent Application Tracking")
+st.markdown("### 🚀 High-Volume Discovery & Permanent Tracking")
 
 tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher", "📈 Application Tracker"])
 
 with tab1:
     col1, col2 = st.columns(2)
-    with col1: target_role = st.text_input("Target Role", value="Statistical Programmer") # Changed from Programming to Programmer
+    with col1: target_role = st.text_input("Target Role", value="Statistical Programming")
     with col2: target_loc = st.text_input("Target Location", value="Remote")
 
     if st.button("🚀 Scan for High-Value Roles"):
-        with st.spinner("Searching professional databases..."):
-            results = search_jobs(target_role, target_loc)
+        with st.spinner("Executing Aggressive Cluster Search..."):
+            results = search_jobs_cluster(target_role, target_loc)
             if results:
-                job_data = [{"Title": r.get('title'), "Snippet": r.get('snippet'), "Link": r.get('link')} for r in results]
-                st.session_state['jobs_df'] = pd.DataFrame(job_data)
-                st.success(f"Found {len(results)} roles!")
+                st.session_state['jobs_df'] = pd.DataFrame(results)
+                st.success(f"Found {len(results)} unique roles across all clusters!")
                 st.table(st.session_state['jobs_df'])
             else:
-                st.error("No roles found. Try a simpler role name like 'Statistical Programmer'.")
+                st.error("No roles found. Try a slightly broader role name.")
 
 with tab2:
     if 'jobs_df' not in st.session_state:
