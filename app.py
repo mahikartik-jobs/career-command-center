@@ -4,9 +4,11 @@ import pandas as pd
 from groq import Groq
 from supabase import create_client, Client
 import time
+import PyPDF2
+import io
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Principal Programmer Command Center", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Universal Career Command Center", page_icon="🎯", layout="wide")
 
 st.markdown("""
     <style>
@@ -15,13 +17,6 @@ st.markdown("""
     .cover-letter-box { background-color: white; padding: 25px; border-radius: 10px; border: 1px solid #ddd; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }
     </style>
     """, unsafe_allow_html=True)
-
-USER_PROFILE = """
-Name: Mahidhar Miriyala
-Role: Principal Statistical Programmer / TA Lead Manager
-Experience: 16+ years in Pharma/Biotech.
-Expertise: SDTM, ADaM, TLFs, Regulatory Submissions (FDA/PMDA), BLA, ISS/ISE, CDISC, Pinnacle 21.
-"""
 
 # --- SECRET MANAGEMENT ---
 serper_key = st.secrets.get("SERPER_API_KEY", None)
@@ -43,14 +38,21 @@ if not all([serper_key, groq_key, supa_url, supa_key]):
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- STATE INITIALIZATION ---
-# This ensures the jobs stay in memory even when you switch tabs
-if 'jobs_df' not in st.session_state:
-    st.session_state['jobs_df'] = None
+# --- PDF TEXT EXTRACTION ---
+def extract_text_from_pdf(uploaded_file):
+    try:
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+        return text
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
+        return None
 
 # --- CORE LOGIC ---
 
-def search_jobs_fresh(role_input, loc_input):
+def search_jobs_fuzzy(role_input, loc_input):
     role_variations = [role_input, role_input.replace("Programming", "Programmer")]
     seniority = ["Principal", "Associate Director", "Manager", "Lead"]
     hubs = [loc_input, "Remote", "New Jersey", "Boston", "California", "USA"]
@@ -69,14 +71,13 @@ def search_jobs_fresh(role_input, loc_input):
             for h in hubs:
                 query = f'{s} {r} {h} {site_keywords}'
                 try:
-                    # Using the 'tbs' parameter for 30-day freshness
-                    payload = {"q": query, "num": 50, "tbs": "qdr:m"} 
+                    payload = {"q": query, "num": 50} 
                     response = requests.post(url, headers=headers, json=payload, timeout=15)
                     if response.status_code == 200:
                         organic = response.json().get('organic', [])
                         for job in organic:
                             link = job.get('link')
-                            if link and not any(x in link for x in ["Indeed", "Glassdoor", "ZipRecruiter"]):
+                            if link:
                                 all_results[link] = {"Title": job.get('title'), "Snippet": job.get('snippet'), "Link": link}
                     count += 1
                     progress_bar.progress(count / total_combos)
@@ -84,9 +85,9 @@ def search_jobs_fresh(role_input, loc_input):
                     continue
     return list(all_results.values())
 
-def analyze_job(job_text):
+def analyze_job(job_text, user_profile):
     try:
-        prompt = f"Compare this Job Description with the Candidate Profile.\n\nPROFILE:\n{USER_PROFILE}\n\nJOB:\n{job_text}\n\nFormat: Score [0-100]%, Reason [2 sentences], Key Missing [List]."
+        prompt = f"Compare this Job Description with the Candidate Profile.\n\nCANDIDATE PROFILE:\n{user_profile}\n\nJOB:\n{job_text}\n\nFormat: Score [0-100]%, Reason [2 sentences], Key Missing [List]."
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
@@ -95,18 +96,17 @@ def analyze_job(job_text):
     except Exception as e:
         return f"AI Analysis unavailable: {e}"
 
-def generate_cover_letter(job_title, job_snippet):
+def generate_cover_letter(job_title, job_snippet, user_profile):
     try:
         prompt = f"""
-        Write a cover letter for {job_title}. 
-        USE THIS PROFILE: {USER_PROFILE}
+        Write a professional, human-sounding cover letter for {job_title}. 
+        CANDIDATE PROFILE: {user_profile}
         JOB DETAILS: {job_snippet}
         
         CRITICAL INSTRUCTIONS:
-        1. Human-like, peer-to-peer professional tone.
-        2. No corporate buzzwords (passionate, leverage, thrilled).
-        3. Focus on the 16+ years of experience and BLA/NDA success.
-        4. Keep it to 3-4 concise paragraphs.
+        1. No corporate buzzwords. 
+        2. Use an industry-peer tone.
+        3. Focus on evidence-based achievements.
         """
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -134,60 +134,76 @@ def get_tracker_data():
         return pd.DataFrame()
 
 # --- APP UI ---
-st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 Persistent Discovery & Application Suite")
+st.title("🎯 Universal Career Command Center")
+st.markdown("### 🚀 Multi-Profile Job Discovery & AI Matching")
 
-tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
+# INITIALIZE SESSION STATES
+if 'jobs_df' not in st.session_state:
+    st.session_state['jobs_df'] = None
+if 'user_cv_text' not in st.session_state:
+    st.session_state['user_cv_text'] = None
+
+tab1, tab2, tab3, tab4 = st.tabs(["👤 Profile Settings", "📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
 
 with tab1:
+    st.subheader("Your Professional Profile")
+    uploaded_file = st.file_uploader("Upload your CV (PDF)", type="pdf")
+    
+    if uploaded_file:
+        with st.spinner("Extracting experience..."):
+            text = extract_text_from_pdf(uploaded_file)
+            st.session_state['user_cv_text'] = text
+            st.success("CV uploaded and parsed successfully!")
+            with st.expander("View Extracted Text"):
+                st.write(text)
+    else:
+        st.info("Please upload your CV to activate the AI Matcher.")
+
+with tab2:
     col1, col2 = st.columns(2)
     with col1: target_role = st.text_input("Target Role", value="Statistical Programmer")
     with col2: target_loc = st.text_input("Target Location", value="Remote")
 
-    if st.button("🚀 Scan for Fresh Roles"):
-        with st.spinner("Executing Freshness Search..."):
-            results = search_jobs_fresh(target_role, target_loc)
+    if st.button("🚀 Scan for High-Value Roles"):
+        with st.spinner("Executing Fuzzy Cluster Search..."):
+            results = search_jobs_fuzzy(target_role, target_loc)
             if results:
                 st.session_state['jobs_df'] = pd.DataFrame(results)
-                st.success(f"Found {len(results)} fresh roles!")
+                st.success(f"Found {len(results)} unique roles!")
+                st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], 
+                              column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
+                              use_container_width=True)
             else:
                 st.error("No roles found.")
 
-    # --- THIS IS THE FIX: Display is OUTSIDE the button block ---
-    if st.session_state['jobs_df'] is not None:
-        st.markdown("#### Current Search Results")
-        st.dataframe(
-            st.session_state['jobs_df'][["Title", "Link"]], 
-            column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
-            use_container_width=True
-        )
-
-with tab2:
-    if st.session_state['jobs_df'] is None:
-        st.info("Please run the Discovery Radar first to populate the list.")
+with tab3:
+    if st.session_state['user_cv_text'] is None:
+        st.error("❌ Please upload your CV in the 'Profile Settings' tab first!")
+    elif 'jobs_df' not in st.session_state:
+        st.info("Run Discovery Radar first.")
     else:
         df = st.session_state['jobs_df']
-        selected_idx = st.selectbox("Select a Job to Analyze", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
+        selected_idx = st.selectbox("Select a Job", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
         job = df.iloc[selected_idx]
         
         col_a, col_b = st.columns([1, 1])
         with col_a:
             if st.button("🧠 Analyze Match %"):
-                with st.spinner("Thinking..."):
-                    analysis = analyze_job(job['Snippet'])
+                with st.spinner("AI Analyzing..."):
+                    analysis = analyze_job(job['Snippet'], st.session_state['user_cv_text'])
                     st.markdown(f"### AI Analysis\n{analysis}")
                     if st.button("✅ Mark as Applied"):
                         if save_to_tracker(job['Title'], job['Link']):
-                            st.success("Saved to permanent tracker!")
+                            st.success("Saved to tracker!")
 
         with col_b:
             if st.button("📄 Generate Human Cover Letter"):
                 with st.spinner("Drafting..."):
-                    letter = generate_cover_letter(job['Title'], job['Snippet'])
+                    letter = generate_cover_letter(job['Title'], job['Snippet'], st.session_state['user_cv_text'])
                     st.markdown("### Your Tailored Letter")
                     st.markdown(f'<div class="cover-letter-box">{letter}</div>', unsafe_allow_html=True)
 
-with tab3:
+with tab4:
     st.subheader("My Application CRM")
     tracker_df = get_tracker_data()
     if not tracker_df.empty:
