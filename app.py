@@ -22,37 +22,36 @@ Experience: 16+ years in Pharma/Biotech.
 Expertise: SDTM, ADaM, TLFs, Regulatory Submissions (FDA/PMDA), BLA, ISS/ISE, CDISC, Pinnacle 21.
 """
 
-# --- SIDEBAR ---
-st.sidebar.title("⚙️ System Settings")
-serper_key = st.sidebar.text_input("Serper.dev API Key", type="password")
-groq_key = st.sidebar.text_input("Groq API Key", type="password")
-supa_url = st.sidebar.text_input("Supabase URL", type="password")
-supa_key = st.sidebar.text_input("Supabase API Key", type="password")
+# --- AUTOMATIC SECRET MANAGEMENT ---
+# This checks if the keys are in the Streamlit Vault first
+serper_key = st.secrets.get("SERPER_API_KEY", None)
+groq_key = st.secrets.get("GROQ_API_KEY", None)
+supa_url = st.secrets.get("SUPABASE_URL", None)
+supa_key = st.secrets.get("SUPABASE_KEY", None)
 
+# If keys are missing from the vault, we show the sidebar as a fallback
 if not all([serper_key, groq_key, supa_url, supa_key]):
-    st.warning("⚠️ Please enter all 4 API keys in the sidebar to activate the Command Center.")
-    st.stop()
+    st.sidebar.title("⚙️ Manual Key Entry")
+    st.sidebar.info("API keys not found in secrets. Please enter them below.")
+    serper_key = st.sidebar.text_input("Serper.dev API Key", type="password", value=serper_key)
+    groq_key = st.sidebar.text_input("Groq API Key", type="password", value=groq_key)
+    supa_url = st.sidebar.text_input("Supabase URL", type="password", value=supa_url)
+    supa_key = st.sidebar.text_input("Supabase API Key", type="password", value=supa_key)
 
+    if not all([serper_key, groq_key, supa_url, supa_key]):
+        st.warning("⚠️ Please enter all API keys in the sidebar to activate the Command Center.")
+        st.stop()
+
+# Initialize Clients
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- FUZZY CLUSTER SEARCH LOGIC ---
+# --- SEARCH LOGIC ---
 def search_jobs_fuzzy(role_input, loc_input):
-    """Human-like fuzzy search: removing strict quotes to find more variations"""
-    
-    # 1. Role Variations: We search for both 'Programming' and 'Programmer'
     role_variations = [role_input, role_input.replace("Programming", "Programmer")]
-    
-    # 2. Seniority keywords (No quotes = Fuzzy match)
     seniority = ["Principal", "Associate Director", "Manager", "Lead"]
-    
-    # 3. Expanded Hubs
     hubs = [loc_input, "Remote", "New Jersey", "Boston", "California", "USA"]
-    
-    # 4. Site-specific and General searches
-    # We remove the 'site:' requirement from the main query to avoid missing roles
-    # but we keep the keywords to ensure they are on career pages
-    site_keywords = ["careers", "apply", "job", "greenhouse", "lever", "workday"]
+    site_keywords = ["careers", "apply", "job"]
     
     all_results = {}
     url = "https://google.serper.dev/search"
@@ -65,32 +64,20 @@ def search_jobs_fuzzy(role_input, loc_input):
     for r in role_variations:
         for s in seniority:
             for h in hubs:
-                # BUILD A FUZZY QUERY
-                # Example: Principal Statistical Programmer Remote careers
-                # No quotes means Google will find "Principal Lead Statistical Programmer" too.
-                query = f'{s} {r} {h} {" ".join(site_keywords[:2])}'
-                
+                query = f'{s} {r} {h} {" ".join(site_keywords)}'
                 try:
                     payload = {"q": query, "num": 50} 
                     response = requests.post(url, headers=headers, json=payload, timeout=15)
-                    
                     if response.status_code == 200:
                         organic = response.json().get('organic', [])
                         for job in organic:
                             link = job.get('link')
                             if link:
-                                all_results[link] = {
-                                    "Title": job.get('title'),
-                                    "Snippet": job.get('snippet'),
-                                    "Link": link
-                                }
-                    
+                                all_results[link] = {"Title": job.get('title'), "Snippet": job.get('snippet'), "Link": link}
                     count += 1
                     progress_bar.progress(count / total_combos)
-                    
-                except Exception as e:
+                except Exception:
                     continue
-
     return list(all_results.values())
 
 def analyze_job(job_text):
@@ -123,7 +110,7 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 Fuzzy-Discovery & Permanent Tracking")
+st.markdown("### 🚀 Automated Discovery & Permanent Tracking")
 
 tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher", "📈 Application Tracker"])
 
@@ -140,7 +127,7 @@ with tab1:
                 st.success(f"Found {len(results)} unique roles!")
                 st.table(st.session_state['jobs_df'])
             else:
-                st.error("No roles found. Try a simpler role name like 'Statistical Programmer'.")
+                st.error("No roles found. Try a simpler role name.")
 
 with tab2:
     if 'jobs_df' not in st.session_state:
