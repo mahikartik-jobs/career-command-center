@@ -14,7 +14,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- USER PROFILE ---
 USER_PROFILE = """
 Name: Mahidhar Miriyala
 Role: Principal Statistical Programmer / TA Lead Manager
@@ -22,7 +21,7 @@ Experience: 16+ years in Pharma/Biotech.
 Expertise: SDTM, ADaM, TLFs, Regulatory Submissions (FDA/PMDA), BLA, ISS/ISE, CDISC, Pinnacle 21.
 """
 
-# --- SIDEBAR: API KEYS ---
+# --- SIDEBAR ---
 st.sidebar.title("⚙️ System Settings")
 serper_key = st.sidebar.text_input("Serper.dev API Key", type="password")
 groq_key = st.sidebar.text_input("Groq API Key", type="password")
@@ -33,20 +32,33 @@ if not all([serper_key, groq_key, supa_url, supa_key]):
     st.warning("⚠️ Please enter all 4 API keys in the sidebar to activate the Command Center.")
     st.stop()
 
-# Initialize Clients
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- CORE FUNCTIONS ---
-
+# --- UPDATED SEARCH LOGIC ---
 def search_jobs(role, location):
+    """Hybrid search: Try strict ATS sites first, then fall back to broad web search"""
+    url = "https://google.serper.dev/search"
+    headers = {'X-API-KEY': serper_key, 'Content-Type': 'application/json'}
+    
+    # STRATEGY 1: Strict ATS (Highest Quality)
+    strict_query = f'("Principal" OR "Associate Director" OR "Manager") "{role}" "{location}" (site:greenhouse.io OR site:lever.co OR site:workday.com OR site:myworkdayjobs.com)'
+    
+    # STRATEGY 2: Broad Search (Highest Volume)
+    broad_query = f'("Principal" OR "Associate Director" OR "Manager") "{role}" "{location}" "careers" OR "apply"'
+    
     try:
-        url = "https://google.serper.dev/search"
-        query = f'("Principal" OR "Associate Director" OR "Manager") "{role}" "{location}" (site:greenhouse.io OR site:lever.co OR site:workday.com OR site:myworkdayjobs.com)'
-        payload = {"q": query, "num": 50} # 50 Results
-        headers = {'X-API-KEY': serper_key, 'Content-Type': 'application/json'}
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        return response.json().get('organic', []) if response.status_code == 200 else []
+        # Attempt 1: Strict Search
+        res_strict = requests.post(url, headers=headers, json={"q": strict_query, "num": 50}, timeout=15)
+        results = res_strict.json().get('organic', []) if res_strict.status_code == 200 else []
+        
+        # If strict search finds nothing, try broad search
+        if not results:
+            st.info("No strict ATS matches found. Switching to Broad Search...")
+            res_broad = requests.post(url, headers=headers, json={"q": broad_query, "num": 50}, timeout=15)
+            results = res_broad.json().get('organic', []) if res_broad.status_code == 200 else []
+            
+        return results
     except Exception as e:
         st.error(f"Search Error: {e}")
         return []
@@ -63,7 +75,6 @@ def analyze_job(job_text):
         return f"AI Analysis unavailable: {e}"
 
 def save_to_tracker(title, link):
-    """Saves the job to the Supabase database permanently"""
     try:
         data = {"title": title, "link": link, "status": "Applied", "date": pd.Timestamp.now().strftime("%Y-%m-%d")}
         supabase.table("jobs_tracker").insert(data).execute()
@@ -73,7 +84,6 @@ def save_to_tracker(title, link):
         return False
 
 def get_tracker_data():
-    """Fetches all tracked jobs from Supabase"""
     try:
         response = supabase.table("jobs_tracker").select("*").execute()
         return pd.DataFrame(response.data)
@@ -89,11 +99,11 @@ tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher", "📈 App
 
 with tab1:
     col1, col2 = st.columns(2)
-    with col1: target_role = st.text_input("Target Role", value="Statistical Programming")
+    with col1: target_role = st.text_input("Target Role", value="Statistical Programmer") # Changed from Programming to Programmer
     with col2: target_loc = st.text_input("Target Location", value="Remote")
 
     if st.button("🚀 Scan for High-Value Roles"):
-        with st.spinner("Scanning..."):
+        with st.spinner("Searching professional databases..."):
             results = search_jobs(target_role, target_loc)
             if results:
                 job_data = [{"Title": r.get('title'), "Snippet": r.get('snippet'), "Link": r.get('link')} for r in results]
@@ -101,7 +111,7 @@ with tab1:
                 st.success(f"Found {len(results)} roles!")
                 st.table(st.session_state['jobs_df'])
             else:
-                st.error("No roles found.")
+                st.error("No roles found. Try a simpler role name like 'Statistical Programmer'.")
 
 with tab2:
     if 'jobs_df' not in st.session_state:
@@ -110,7 +120,6 @@ with tab2:
         df = st.session_state['jobs_df']
         selected_idx = st.selectbox("Select a Job", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
         job = df.iloc[selected_idx]
-        
         if st.button("🧠 Analyze Match %"):
             with st.spinner("AI Analyzing..."):
                 analysis = analyze_job(job['Snippet'])
@@ -122,13 +131,7 @@ with tab2:
 with tab3:
     st.subheader("My Application CRM")
     tracker_df = get_tracker_data()
-    
     if not tracker_df.empty:
-        # Display the tracker as an editable table
-        edited_df = st.data_editor(tracker_df, num_rows="dynamic")
-        if st.button("💾 Save Status Changes"):
-            # In a full version, we would update the Supabase rows here
-            st.info("Status updates are saved to your session. (Full DB sync requires unique IDs).")
+        st.data_editor(tracker_df, num_rows="dynamic")
     else:
-        st.info("No jobs tracked yet. Use the AI Matcher tab to add jobs!")
-
+        st.info("No jobs tracked yet.")
