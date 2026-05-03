@@ -179,12 +179,18 @@ with tab2:
 with tab3:
     if st.session_state['user_cv_text'] is None:
         st.error("❌ Please upload your CV in the 'Profile Settings' tab first!")
-    elif 'jobs_df' not in st.session_state:
+    elif st.session_state['jobs_df'] is None or st.session_state['jobs_df'].empty:
         st.info("Run Discovery Radar first.")
     else:
         df = st.session_state['jobs_df']
-        selected_idx = st.selectbox("Select a Job", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
-        job = df.iloc[selected_idx]
+        
+        # FIX: We use the Title as the selection value instead of a range index.
+        # This prevents the TypeError when the dataframe changes.
+        job_titles = df['Title'].tolist()
+        selected_title = st.selectbox("Select a Job to Analyze", options=job_titles)
+        
+        # Retrieve the full job data based on the selected title
+        job = df[df['Title'] == selected_title].iloc[0]
         
         col_a, col_b = st.columns([1, 1])
         with col_a:
