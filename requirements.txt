@@ -3,4 +3,4 @@ requests
 pandas
 groq
 supabase
-
+PyPDF2
