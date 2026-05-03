@@ -36,62 +36,60 @@ if not all([serper_key, groq_key, supa_url, supa_key]):
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- RESTORED AGGRESSIVE SEARCH LOGIC ---
-def search_jobs_cluster(role_input, loc_input):
-    """The la-script 'Cluster' logic: Multiple searches for maximum volume"""
+# --- FUZZY CLUSTER SEARCH LOGIC ---
+def search_jobs_fuzzy(role_input, loc_input):
+    """Human-like fuzzy search: removing strict quotes to find more variations"""
     
-    # Define the clusters we want to hunt in
-    # We use the user's input as the base, but add high-value seniority keywords
-    SENIORITY = ["Principal", "Associate Director", "Manager", "Lead"]
-    # We use the user's location, but also add the Pharma hubs
-    HUBS = [loc_input, "Remote", "New Jersey", "Boston", "California", "North Carolina"]
+    # 1. Role Variations: We search for both 'Programming' and 'Programmer'
+    role_variations = [role_input, role_input.replace("Programming", "Programmer")]
     
-    # The sites we trust for high-quality direct applications
-    SITES = ['site:greenhouse.io', 'site:lever.co', 'site:myworkdayjobs.com', 'site:workday.com']
+    # 2. Seniority keywords (No quotes = Fuzzy match)
+    seniority = ["Principal", "Associate Director", "Manager", "Lead"]
     
-    all_results = {} # Use dictionary to prevent duplicate links
+    # 3. Expanded Hubs
+    hubs = [loc_input, "Remote", "New Jersey", "Boston", "California", "USA"]
     
-    # We will perform multiple searches to cast a huge net
-    # To keep the app fast, we'll do 10-15 high-impact combinations
-    search_combinations = []
-    for s in SENIORITY:
-        for h in HUBS:
-            # Create a query for each combo
-            # Example: site:greenhouse.io "Principal" "Statistical Programming" "Remote"
-            for site in SITES:
-                search_combinations.append(f'{site} "{s}" "{role_input}" "{h}"')
-
-    # To prevent the app from timing out, we limit to the top 20 most effective combos
-    # and ask for 100 results per query.
-    selected_queries = search_combinations[:20] 
+    # 4. Site-specific and General searches
+    # We remove the 'site:' requirement from the main query to avoid missing roles
+    # but we keep the keywords to ensure they are on career pages
+    site_keywords = ["careers", "apply", "job", "greenhouse", "lever", "workday"]
     
+    all_results = {}
     url = "https://google.serper.dev/search"
     headers = {'X-API-KEY': serper_key, 'Content-Type': 'application/json'}
     
     progress_bar = st.progress(0)
-    
-    for i, query in enumerate(selected_queries):
-        try:
-            # num: 100 is the maximum results Serper can return per request
-            payload = {"q": query, "num": 100} 
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
-            
-            if response.status_code == 200:
-                organic = response.json().get('organic', [])
-                for job in organic:
-                    link = job.get('link')
-                    if link:
-                        all_results[link] = {
-                            "Title": job.get('title'),
-                            "Snippet": job.get('snippet'),
-                            "Link": link
-                        }
-            
-            # Update progress bar
-            progress_bar.progress((i + 1) / len(selected_queries))
-            
-        except Exception as e:
-            continue # Keep moving even if one query fails
+    total_combos = len(role_variations) * len(seniority) * len(hubs)
+    count = 0
+
+    for r in role_variations:
+        for s in seniority:
+            for h in hubs:
+                # BUILD A FUZZY QUERY
+                # Example: Principal Statistical Programmer Remote careers
+                # No quotes means Google will find "Principal Lead Statistical Programmer" too.
+                query = f'{s} {r} {h} {" ".join(site_keywords[:2])}'
+                
+                try:
+                    payload = {"q": query, "num": 50} 
+                    response = requests.post(url, headers=headers, json=payload, timeout=15)
+                    
+                    if response.status_code == 200:
+                        organic = response.json().get('organic', [])
+                        for job in organic:
+                            link = job.get('link')
+                            if link:
+                                all_results[link] = {
+                                    "Title": job.get('title'),
+                                    "Snippet": job.get('snippet'),
+                                    "Link": link
+                                }
+                    
+                    count += 1
+                    progress_bar.progress(count / total_combos)
+                    
+                except Exception as e:
+                    continue
 
     return list(all_results.values())
 
@@ -125,24 +123,24 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 High-Volume Discovery & Permanent Tracking")
+st.markdown("### 🚀 Fuzzy-Discovery & Permanent Tracking")
 
 tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher", "📈 Application Tracker"])
 
 with tab1:
     col1, col2 = st.columns(2)
-    with col1: target_role = st.text_input("Target Role", value="Statistical Programming")
+    with col1: target_role = st.text_input("Target Role", value="Statistical Programmer")
     with col2: target_loc = st.text_input("Target Location", value="Remote")
 
     if st.button("🚀 Scan for High-Value Roles"):
-        with st.spinner("Executing Aggressive Cluster Search..."):
-            results = search_jobs_cluster(target_role, target_loc)
+        with st.spinner("Executing Fuzzy Cluster Search..."):
+            results = search_jobs_fuzzy(target_role, target_loc)
             if results:
                 st.session_state['jobs_df'] = pd.DataFrame(results)
-                st.success(f"Found {len(results)} unique roles across all clusters!")
+                st.success(f"Found {len(results)} unique roles!")
                 st.table(st.session_state['jobs_df'])
             else:
-                st.error("No roles found. Try a slightly broader role name.")
+                st.error("No roles found. Try a simpler role name like 'Statistical Programmer'.")
 
 with tab2:
     if 'jobs_df' not in st.session_state:
