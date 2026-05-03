@@ -4,7 +4,6 @@ import pandas as pd
 from groq import Groq
 from supabase import create_client, Client
 import time
-from datetime import datetime
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Principal Programmer Command Center", page_icon="🎯", layout="wide")
@@ -44,14 +43,17 @@ if not all([serper_key, groq_key, supa_url, supa_key]):
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- UPDATED FRESHNESS-FIRST SEARCH LOGIC ---
+# --- STATE INITIALIZATION ---
+# This ensures the jobs stay in memory even when you switch tabs
+if 'jobs_df' not in st.session_state:
+    st.session_state['jobs_df'] = None
+
+# --- CORE LOGIC ---
+
 def search_jobs_fresh(role_input, loc_input):
-    """Search with strict time-filtering to remove dead links"""
     role_variations = [role_input, role_input.replace("Programming", "Programmer")]
     seniority = ["Principal", "Associate Director", "Manager", "Lead"]
     hubs = [loc_input, "Remote", "New Jersey", "Boston", "California", "USA"]
-    
-    # We use a tighter set of keywords to ensure we only get application pages
     site_keywords = "careers apply jobs"
     
     all_results = {}
@@ -65,20 +67,15 @@ def search_jobs_fresh(role_input, loc_input):
     for r in role_variations:
         for s in seniority:
             for h in hubs:
-                # The 'tbs' parameter 'qdr:m' tells Google: ONLY results from the last month
                 query = f'{s} {r} {h} {site_keywords}'
                 try:
-                    payload = {
-                        "q": query, 
-                        "num": 50,
-                        "tbs": "qdr:m" # CRITICAL: This filters for results from the last 30 days
-                    } 
+                    # Using the 'tbs' parameter for 30-day freshness
+                    payload = {"q": query, "num": 50, "tbs": "qdr:m"} 
                     response = requests.post(url, headers=headers, json=payload, timeout=15)
                     if response.status_code == 200:
                         organic = response.json().get('organic', [])
                         for job in organic:
                             link = job.get('link')
-                            # FILTER: Remove common dead-end or generic aggregation links
                             if link and not any(x in link for x in ["Indeed", "Glassdoor", "ZipRecruiter"]):
                                 all_results[link] = {"Title": job.get('title'), "Snippet": job.get('snippet'), "Link": link}
                     count += 1
@@ -138,7 +135,7 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 Fresh-Only Discovery & Application Suite")
+st.markdown("### 🚀 Persistent Discovery & Application Suite")
 
 tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
 
@@ -147,35 +144,41 @@ with tab1:
     with col1: target_role = st.text_input("Target Role", value="Statistical Programmer")
     with col2: target_loc = st.text_input("Target Location", value="Remote")
 
-    if st.button("🚀 Scan for Fresh Roles (Last 30 Days)"):
-        with st.spinner("Filtering for latest postings..."):
+    if st.button("🚀 Scan for Fresh Roles"):
+        with st.spinner("Executing Freshness Search..."):
             results = search_jobs_fresh(target_role, target_loc)
             if results:
                 st.session_state['jobs_df'] = pd.DataFrame(results)
-                st.success(f"Found {len(results)} fresh roles from the last 30 days!")
-                st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], 
-                              column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
-                              use_container_width=True)
+                st.success(f"Found {len(results)} fresh roles!")
             else:
-                st.error("No fresh roles found. Try a broader location.")
+                st.error("No roles found.")
+
+    # --- THIS IS THE FIX: Display is OUTSIDE the button block ---
+    if st.session_state['jobs_df'] is not None:
+        st.markdown("#### Current Search Results")
+        st.dataframe(
+            st.session_state['jobs_df'][["Title", "Link"]], 
+            column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
+            use_container_width=True
+        )
 
 with tab2:
-    if 'jobs_df' not in st.session_state:
-        st.info("Run Discovery Radar first.")
+    if st.session_state['jobs_df'] is None:
+        st.info("Please run the Discovery Radar first to populate the list.")
     else:
         df = st.session_state['jobs_df']
-        selected_idx = st.selectbox("Select a Job", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
+        selected_idx = st.selectbox("Select a Job to Analyze", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
         job = df.iloc[selected_idx]
         
         col_a, col_b = st.columns([1, 1])
         with col_a:
             if st.button("🧠 Analyze Match %"):
-                with st.spinner("Analyzing..."):
+                with st.spinner("Thinking..."):
                     analysis = analyze_job(job['Snippet'])
                     st.markdown(f"### AI Analysis\n{analysis}")
                     if st.button("✅ Mark as Applied"):
                         if save_to_tracker(job['Title'], job['Link']):
-                            st.success("Saved to tracker!")
+                            st.success("Saved to permanent tracker!")
 
         with col_b:
             if st.button("📄 Generate Human Cover Letter"):
