@@ -12,6 +12,7 @@ st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #1a5f7a; color: white; }
+    .cover-letter-box { background-color: white; padding: 20px; border-radius: 10px; border: 1px solid #ddd; font-family: 'Times New Roman', serif; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -22,31 +23,28 @@ Experience: 16+ years in Pharma/Biotech.
 Expertise: SDTM, ADaM, TLFs, Regulatory Submissions (FDA/PMDA), BLA, ISS/ISE, CDISC, Pinnacle 21.
 """
 
-# --- AUTOMATIC SECRET MANAGEMENT ---
-# This checks if the keys are in the Streamlit Vault first
+# --- SECRET MANAGEMENT ---
 serper_key = st.secrets.get("SERPER_API_KEY", None)
 groq_key = st.secrets.get("GROQ_API_KEY", None)
 supa_url = st.secrets.get("SUPABASE_URL", None)
 supa_key = st.secrets.get("SUPABASE_KEY", None)
 
-# If keys are missing from the vault, we show the sidebar as a fallback
 if not all([serper_key, groq_key, supa_url, supa_key]):
     st.sidebar.title("⚙️ Manual Key Entry")
-    st.sidebar.info("API keys not found in secrets. Please enter them below.")
     serper_key = st.sidebar.text_input("Serper.dev API Key", type="password", value=serper_key)
     groq_key = st.sidebar.text_input("Groq API Key", type="password", value=groq_key)
     supa_url = st.sidebar.text_input("Supabase URL", type="password", value=supa_url)
     supa_key = st.sidebar.text_input("Supabase API Key", type="password", value=supa_key)
 
     if not all([serper_key, groq_key, supa_url, supa_key]):
-        st.warning("⚠️ Please enter all API keys in the sidebar to activate the Command Center.")
+        st.warning("⚠️ Please enter all API keys in the sidebar to activate.")
         st.stop()
 
-# Initialize Clients
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- SEARCH LOGIC ---
+# --- CORE LOGIC ---
+
 def search_jobs_fuzzy(role_input, loc_input):
     role_variations = [role_input, role_input.replace("Programming", "Programmer")]
     seniority = ["Principal", "Associate Director", "Manager", "Lead"]
@@ -91,6 +89,29 @@ def analyze_job(job_text):
     except Exception as e:
         return f"AI Analysis unavailable: {e}"
 
+def generate_cover_letter(job_title, job_snippet):
+    """Professional Cover Letter Engine"""
+    try:
+        prompt = f"""
+        Write a highly professional, executive-level cover letter for the position of {job_title}.
+        CANDIDATE PROFILE: {USER_PROFILE}
+        JOB DETAILS: {job_snippet}
+        
+        Requirements:
+        1. Professional business letter format.
+        2. Highlight 16+ years of experience and specific expertise in CDISC, BLA, and FDA submissions.
+        3. Connect the candidate's TA Lead experience to the needs of the job.
+        4. Keep it to 3-4 paragraphs.
+        5. Use a confident, authoritative, yet humble tone.
+        """
+        completion = client_groq.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"Could not generate cover letter: {e}"
+
 def save_to_tracker(title, link):
     try:
         data = {"title": title, "link": link, "status": "Applied", "date": pd.Timestamp.now().strftime("%Y-%m-%d")}
@@ -110,9 +131,9 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 Automated Discovery & Permanent Tracking")
+st.markdown("### 🚀 High-Precision Discovery & Application Suite")
 
-tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher", "📈 Application Tracker"])
+tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
 
 with tab1:
     col1, col2 = st.columns(2)
@@ -125,9 +146,9 @@ with tab1:
             if results:
                 st.session_state['jobs_df'] = pd.DataFrame(results)
                 st.success(f"Found {len(results)} unique roles!")
-                st.table(st.session_state['jobs_df'])
+                st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], use_container_width=True)
             else:
-                st.error("No roles found. Try a simpler role name.")
+                st.error("No roles found.")
 
 with tab2:
     if 'jobs_df' not in st.session_state:
@@ -136,13 +157,25 @@ with tab2:
         df = st.session_state['jobs_df']
         selected_idx = st.selectbox("Select a Job", range(len(df)), format_func=lambda x: f"{df.iloc[x]['Title']}")
         job = df.iloc[selected_idx]
-        if st.button("🧠 Analyze Match %"):
-            with st.spinner("AI Analyzing..."):
-                analysis = analyze_job(job['Snippet'])
-                st.markdown(f"### AI Analysis\n{analysis}")
-                if st.button("✅ Mark as Applied"):
-                    if save_to_tracker(job['Title'], job['Link']):
-                        st.success("Job saved to your permanent tracker!")
+        
+        col_a, col_b = st.columns([1, 1])
+        
+        with col_a:
+            if st.button("🧠 Analyze Match %"):
+                with st.spinner("Analyzing..."):
+                    analysis = analyze_job(job['Snippet'])
+                    st.markdown(f"### AI Analysis\n{analysis}")
+                    if st.button("✅ Mark as Applied"):
+                        if save_to_tracker(job['Title'], job['Link']):
+                            st.success("Saved to tracker!")
+
+        with col_b:
+            if st.button("📄 Generate Cover Letter"):
+                with st.spinner("Writing professional letter..."):
+                    letter = generate_cover_letter(job['Title'], job['Snippet'])
+                    st.markdown("### Your Tailored Cover Letter")
+                    st.markdown(f'<div class="cover-letter-box">{letter}</div>', unsafe_allow_html=True)
+                    st.info("💡 Copy this text and paste it into the 'Cover Letter' section of the application.")
 
 with tab3:
     st.subheader("My Application CRM")
