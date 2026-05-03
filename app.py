@@ -4,6 +4,7 @@ import pandas as pd
 from groq import Groq
 from supabase import create_client, Client
 import time
+from datetime import datetime
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Principal Programmer Command Center", page_icon="🎯", layout="wide")
@@ -16,14 +17,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- HUMAN-CENTRIC USER PROFILE ---
-# I have changed this from a list to a narrative. This helps the AI sound more human.
 USER_PROFILE = """
-Mahidhar Miriyala is a seasoned Principal Statistical Programmer and TA Lead Manager with over 16 years of deep-trench experience in the Pharma and Biotech sectors. 
-He doesn't just know the standards; he has lived them through multiple high-stakes FDA and PMDA regulatory submissions. 
-His core strength is the end-to-end delivery of BLA and NDA packages, specifically the complex work involved in ISS and ISE. 
-He is a subject matter expert in CDISC (SDTM, ADaM) and Pinnacle 21, with a proven track record of leading cross-functional teams and managing CRO vendors to ensure submission-readiness.
-Expertise spans Oncology, Fibrosis, Cardiovascular, and Neuroscience.
+Name: Mahidhar Miriyala
+Role: Principal Statistical Programmer / TA Lead Manager
+Experience: 16+ years in Pharma/Biotech.
+Expertise: SDTM, ADaM, TLFs, Regulatory Submissions (FDA/PMDA), BLA, ISS/ISE, CDISC, Pinnacle 21.
 """
 
 # --- SECRET MANAGEMENT ---
@@ -46,13 +44,15 @@ if not all([serper_key, groq_key, supa_url, supa_key]):
 client_groq = Groq(api_key=groq_key)
 supabase: Client = create_client(supa_url, supa_key)
 
-# --- CORE LOGIC ---
-
-def search_jobs_fuzzy(role_input, loc_input):
+# --- UPDATED FRESHNESS-FIRST SEARCH LOGIC ---
+def search_jobs_fresh(role_input, loc_input):
+    """Search with strict time-filtering to remove dead links"""
     role_variations = [role_input, role_input.replace("Programming", "Programmer")]
     seniority = ["Principal", "Associate Director", "Manager", "Lead"]
     hubs = [loc_input, "Remote", "New Jersey", "Boston", "California", "USA"]
-    site_keywords = ["careers", "apply", "job"]
+    
+    # We use a tighter set of keywords to ensure we only get application pages
+    site_keywords = "careers apply jobs"
     
     all_results = {}
     url = "https://google.serper.dev/search"
@@ -65,15 +65,21 @@ def search_jobs_fuzzy(role_input, loc_input):
     for r in role_variations:
         for s in seniority:
             for h in hubs:
-                query = f'{s} {r} {h} {" ".join(site_keywords)}'
+                # The 'tbs' parameter 'qdr:m' tells Google: ONLY results from the last month
+                query = f'{s} {r} {h} {site_keywords}'
                 try:
-                    payload = {"q": query, "num": 50} 
+                    payload = {
+                        "q": query, 
+                        "num": 50,
+                        "tbs": "qdr:m" # CRITICAL: This filters for results from the last 30 days
+                    } 
                     response = requests.post(url, headers=headers, json=payload, timeout=15)
                     if response.status_code == 200:
                         organic = response.json().get('organic', [])
                         for job in organic:
                             link = job.get('link')
-                            if link:
+                            # FILTER: Remove common dead-end or generic aggregation links
+                            if link and not any(x in link for x in ["Indeed", "Glassdoor", "ZipRecruiter"]):
                                 all_results[link] = {"Title": job.get('title'), "Snippet": job.get('snippet'), "Link": link}
                     count += 1
                     progress_bar.progress(count / total_combos)
@@ -83,19 +89,7 @@ def search_jobs_fuzzy(role_input, loc_input):
 
 def analyze_job(job_text):
     try:
-        prompt = f"""
-        Act as a peer-level Statistical Programming Director. 
-        Look at this job description and Mahidhar's profile. 
-        Don't use corporate jargon. Tell me honestly: is this a match?
-        
-        CANDIDATE: {USER_PROFILE}
-        JOB: {job_text}
-        
-        Format: 
-        Score: [0-100]%
-        Why: [1-2 sentences in natural, human language]
-        Gap: [What's missing, or 'None']
-        """
+        prompt = f"Compare this Job Description with the Candidate Profile.\n\nPROFILE:\n{USER_PROFILE}\n\nJOB:\n{job_text}\n\nFormat: Score [0-100]%, Reason [2 sentences], Key Missing [List]."
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
@@ -111,12 +105,11 @@ def generate_cover_letter(job_title, job_snippet):
         USE THIS PROFILE: {USER_PROFILE}
         JOB DETAILS: {job_snippet}
         
-        CRITICAL INSTRUCTIONS for a HUMAN tone:
-        1. DO NOT use words like 'passionate', 'leverage', 'synergy', or 'thrilled'.
-        2. Write it as a conversation between two experts. 
-        3. Focus on evidence: instead of saying 'I am an expert in CDISC', say 'I've spent the last 16 years ensuring BLA and NDA packages are CDISC-compliant.'
-        4. Keep it concise, confident, and avoid sounding like a template. 
-        5. Use a natural, professional flow.
+        CRITICAL INSTRUCTIONS:
+        1. Human-like, peer-to-peer professional tone.
+        2. No corporate buzzwords (passionate, leverage, thrilled).
+        3. Focus on the 16+ years of experience and BLA/NDA success.
+        4. Keep it to 3-4 concise paragraphs.
         """
         completion = client_groq.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -145,7 +138,7 @@ def get_tracker_data():
 
 # --- APP UI ---
 st.title("🎯 Principal Programmer Command Center")
-st.markdown("### 🚀 High-Precision Discovery & Human-Centric Applications")
+st.markdown("### 🚀 Fresh-Only Discovery & Application Suite")
 
 tab1, tab2, tab3 = st.tabs(["📡 Discovery Radar", "🧠 AI Matcher & Letter", "📈 Application Tracker"])
 
@@ -154,22 +147,17 @@ with tab1:
     with col1: target_role = st.text_input("Target Role", value="Statistical Programmer")
     with col2: target_loc = st.text_input("Target Location", value="Remote")
 
-    if st.button("🚀 Scan for High-Value Roles"):
-        with st.spinner("Executing Fuzzy Cluster Search..."):
-            results = search_jobs_fuzzy(target_role, target_loc)
+    if st.button("🚀 Scan for Fresh Roles (Last 30 Days)"):
+        with st.spinner("Filtering for latest postings..."):
+            results = search_jobs_fresh(target_role, target_loc)
             if results:
                 st.session_state['jobs_df'] = pd.DataFrame(results)
-                st.success(f"Found {len(results)} unique roles!")
-                
-                # --- CLICKABLE LINKS FIX ---
-                # We use st.dataframe with column_config to make links clickable
-                st.dataframe(
-                    st.session_state['jobs_df'][["Title", "Link"]], 
-                    column_config={"Link": st.column_config.LinkColumn("Click to Apply ↗️")},
-                    use_container_width=True
-                )
+                st.success(f"Found {len(results)} fresh roles from the last 30 days!")
+                st.dataframe(st.session_state['jobs_df'][["Title", "Link"]], 
+                              column_config={"Link": st.column_config.LinkColumn("Apply Now ↗️")},
+                              use_container_width=True)
             else:
-                st.error("No roles found.")
+                st.error("No fresh roles found. Try a broader location.")
 
 with tab2:
     if 'jobs_df' not in st.session_state:
@@ -182,7 +170,7 @@ with tab2:
         col_a, col_b = st.columns([1, 1])
         with col_a:
             if st.button("🧠 Analyze Match %"):
-                with st.spinner("Thinking like a Director..."):
+                with st.spinner("Analyzing..."):
                     analysis = analyze_job(job['Snippet'])
                     st.markdown(f"### AI Analysis\n{analysis}")
                     if st.button("✅ Mark as Applied"):
@@ -195,7 +183,6 @@ with tab2:
                     letter = generate_cover_letter(job['Title'], job['Snippet'])
                     st.markdown("### Your Tailored Letter")
                     st.markdown(f'<div class="cover-letter-box">{letter}</div>', unsafe_allow_html=True)
-                    st.info("💡 Pro Tip: Read through this and tweak one sentence to make it truly yours before sending.")
 
 with tab3:
     st.subheader("My Application CRM")
