@@ -57,7 +57,7 @@ def analyze_job(job_text):
         prompt = f"Compare this Job Description with the Candidate Profile.\n\nPROFILE:\n{USER_PROFILE}\n\nJOB:\n{job_text}\n\nFormat: Score [0-100]%, Reason [2 sentences], Key Missing [List]."
         
         completion = client.chat.completions.create(
-            model="llama3-8b-8192", # Using the high-speed free model
+            model="llama-3.1-8b-instant", # Using the high-speed free model
             messages=[{"role": "user", "content": prompt}]
         )
         return completion.choices[0].message.content
@@ -69,7 +69,7 @@ def generate_pitch(job_title, company):
     try:
         prompt = f"Write a 3-sentence professional LinkedIn message for {job_title} at {company} for Mahidhar (16+ years exp, Principal Programmer, CDISC expert)."
         completion = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
         )
         return completion.choices[0].message.content
